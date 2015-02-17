@@ -39,7 +39,6 @@
 /*************************************************************************/
 #include <stdio.h>
 #include <math.h>
-#include <string.h>
 
 /* To allow some normally const fields to manipulated during building */
 #define const
@@ -48,6 +47,9 @@
 #include "cst_wave.h"
 #include "cst_track.h"
 #include "cst_sigpr.h"
+
+/* "#include <string.h>" must be after "#include <windows.h>" on mingw. */
+#include <string.h>
 
 float lpc_min;
 float lpc_range;

@@ -65,6 +65,11 @@ include $(TOP)/config/common_make_rules
 ifeq ($(TARGET_OS),wince)
 BUILD_DIRS += wince
 endif
+ifeq ($(TARGET_OS),mingw32)
+ifdef DLLTOOL
+BUILD_DIRS += windows
+endif
+endif
 
 config/config: config/config.in config.status
 	./config.status
@@ -106,6 +111,11 @@ install:
 	mkdir -p $(DESTDIR)$(INSTALLINCDIR)
 	$(INSTALL) -m 644 include/*.h $(DESTDIR)$(INSTALLINCDIR)
 	@ $(MAKE) -C main --no-print-directory DESTDIR=$(DESTDIR) install
+ifeq ($(TARGET_OS),mingw32)
+ifdef DLLTOOL
+	@ $(MAKE) -C windows --no-print-directory DESTDIR=$(DESTDIR) install
+endif
+endif
 
 time-stamp :
 	@ echo $(PROJECT_NAME) >.time-stamp

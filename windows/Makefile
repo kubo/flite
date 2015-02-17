@@ -31,17 +31,17 @@
 ##                                                                       ##
 ###########################################################################
 ##                                                                       ##
-##  Windows Mobile support for Flite                                     ##
+##  Windows support for Flite                                            ##
 ##                                                                       ##
 ##  Builds a usable flite, language and voice .dlls with mingw           ##
 ##                                                                       ##
 ##     http://www.mingw.org                                              ##
 ##                                                                       ##
-##  Also an example command line program                                 ## 
-##                                                                       ##
 ##  At top level                                                         ##
-##      ./configure --target=i386-mingw32                                ##
+##      ./configure --enablle-shared                                     ##
 ##      make                                                             ##
+##                                                                       ##
+##  '--enablle-shared' is required to create dll and lib flies.          ##
 ##                                                                       ##
 ###########################################################################
 TOP = ..
@@ -52,31 +52,60 @@ H =
 RC = 
 SRCS = 
 OBJS = $(SRCS:.c=.o)
-WINDOWS = fliteDll.cpp stdafx.h
 FILES = Makefile $(SRCS) $(H) $(RC) $(WINDOWS)
 
-flite_LIBS = flite_$(FL_VOX) flite_$(FL_LANG) flite_$(FL_LEX) 
-flite_LIBS_flags = -L$(LIBDIR) $(flite_LIBS:%=-l%)
-flite_LIBS_deps = $(flite_LIBS:%=$(LIBDIR)/lib%.a)
+DLLS = flite.dll \
+       flite_cmu_grapheme_lang.dll \
+       flite_cmu_grapheme_lex.dll \
+       flite_cmu_indic_lang.dll \
+       flite_cmu_indic_lex.dll \
+       flite_cmu_time_awb.dll \
+       flite_cmu_us_awb.dll \
+       flite_cmu_us_kal.dll \
+       flite_cmu_us_kal16.dll \
+       flite_cmu_us_rms.dll \
+       flite_cmu_us_slt.dll \
+       flite_cmulex.dll \
+       flite_usenglish.dll
 
-LOCAL_CLEAN = flite.dll flite.lib flite.def
+LOCAL_CLEAN = $(DLLS) $(DLLS:.dll=.lib) $(DLLS:.dll=.def)
 
-ALL = 
+ALL = $(DLLS)
 
 include $(TOP)/config/common_make_rules
 
-flite.def: $(LIBDIR)/libflite.a
-	echo "LIBRARY FLITE.DLL" >flite.def
-	echo "EXPORTS" >>flite.def
-	$(NM) $(LIBDIR)/libflite.a | \
-	grep "^0" | awk '{if ($$2 == "T") print $$3}' | sed 's/_//' >>flite.def
+VPATH = $(LIBDIR)
 
-flite.dll: $(LIBDIR)/libflite.a
+%.dll: lib%.a
+	$(DLLTOOL) -z $*.def --export-all-symbol $<
 	rm -rf flitedll
 	mkdir flitedll
-	(cd flitedll && ar x ../$(LIBDIR)/libflite.a)
-	$(DLLWRAP) -def flite.def flitedll/*.o --output-lib flite.lib -o flite.dll
+	(cd flitedll && ar x ../$<)
+	$(DLLWRAP) -def $*.def flitedll/*.o $(filter %.lib,$^) --output-lib $*.lib -o $@ $(if $(filter flite.dll,$@),-lwinmm)
 	rm -rf flitedll
 
+install: $(DLLS)
+	@ for i in $(DLLS:.dll=) ; \
+	do \
+	   $(INSTALL) $$i.dll $(DESTDIR)$(INSTALLBINDIR); \
+	   $(INSTALL) $$i.lib $(DESTDIR)$(INSTALLLIBDIR); \
+	done
 
+flite.dll: libflite.a
+flite_cmu_grapheme_lang.dll: libflite_cmu_grapheme_lang.a flite.lib
+flite_cmu_grapheme_lex.dll: libflite_cmu_grapheme_lex.a flite.lib
+flite_cmu_indic_lang.dll: libflite_cmu_indic_lang.a flite.lib flite_usenglish.lib
+flite_cmu_indic_lex.dll: libflite_cmu_indic_lex.a flite.lib flite_cmu_indic_lang.lib flite_cmulex.lib
+flite_cmu_time_awb.dll: libflite_cmu_time_awb.a flite.lib flite_usenglish.lib flite_cmulex.lib
+flite_cmu_us_awb.dll: libflite_cmu_us_awb.a flite.lib flite_usenglish.lib flite_cmulex.lib
+flite_cmu_us_kal.dll: libflite_cmu_us_kal.a flite.lib flite_usenglish.lib flite_cmulex.lib
+flite_cmu_us_kal16.dll: libflite_cmu_us_kal16.a flite.lib flite_usenglish.lib flite_cmulex.lib
+flite_cmu_us_rms.dll: libflite_cmu_us_rms.a flite.lib flite_usenglish.lib flite_cmulex.lib
+flite_cmu_us_slt.dll: libflite_cmu_us_slt.a flite.lib flite_usenglish.lib flite_cmulex.lib
+flite_cmulex.dll: libflite_cmulex.a flite.lib
+flite_usenglish.dll: libflite_usenglish.a flite.lib
 
+flite.lib: flite.dll
+flite_usenglish.lib: flite_usenglish.dll
+flite_cmu_indic_lang.lib: flite_cmu_indic_lang.dll
+flite_cmulex.lib: flite_cmulex.dll
