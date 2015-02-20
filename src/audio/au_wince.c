@@ -37,6 +37,7 @@
 /*                                                                       */
 /*************************************************************************/
 
+#include <stddef.h>
 #include <windows.h>
 #include <mmsystem.h>
 
@@ -48,45 +49,19 @@
 #define DWORD_PTR DWORD
 #endif
 
+typedef struct queue_data {
+    struct queue_data *next;
+    WAVEHDR hdr;
+    char data[1];
+} queue_data_t;
+
 typedef struct au_wince_pdata_struct {
 	HWAVEOUT wo;
 	HANDLE bevt;
 	HANDLE wevt;
 	LONG bcnt;
-  int in_reset;
-  void **fq;
-  int fqlen;
-  int fqmaxlen;
+	queue_data_t *queued_data;
 } au_wince_pdata;
-
-void add_to_free_queue(cst_audiodev *ad, void *datum)
-{
-    au_wince_pdata *pd = ad->platform_data;
-
-    if (pd->fqlen == pd->fqmaxlen && !(pd->fqmaxlen % 32))
-    {
-        pd->fqmaxlen += 32;
-        pd->fq = (void **)realloc(pd->fq, pd->fqmaxlen * sizeof(void *));
-        if (!pd->fq)
-        {
-            cst_errmsg("Out of memory\n");
-            cst_error();
-        }
-    }
-    pd->fq[pd->fqlen++] = datum;
-}
-
-static void finish_header(HWAVEOUT drvr, WAVEHDR *hdr)
-{
-    if (waveOutUnprepareHeader(drvr,hdr,sizeof(*hdr))
-        != MMSYSERR_NOERROR)
-    {
-        cst_errmsg("Failed to unprepare header %p\n", hdr);
-        cst_error();
-    }
-    cst_free(hdr->lpData);
-    cst_free(hdr);
-}
 
 void CALLBACK sndbuf_done(HWAVEOUT drvr, UINT msg,
 			  DWORD_PTR udata, DWORD_PTR param1, DWORD_PTR param2)
@@ -103,7 +78,6 @@ void CALLBACK sndbuf_done(HWAVEOUT drvr, UINT msg,
             SetEvent(pd->bevt);
         if (c == 7)
             SetEvent(pd->wevt);
-        if (pd->in_reset) add_to_free_queue(ad, hdr);
     }
 }
 
@@ -163,11 +137,23 @@ cst_audiodev *audio_open_wince(int sps, int channels, int fmt)
 static void free_queue_empty(cst_audiodev *ad)
 {
     au_wince_pdata *pd = ad->platform_data;
+    queue_data_t *qd, *qd_next;
 
-    while (pd->fqlen)
-    {
-        finish_header(pd->wo, pd->fq[--pd->fqlen]);
+    for (qd = pd->queued_data; qd != NULL; qd = qd_next) {
+        WAVEHDR *hdr = &qd->hdr;
+        qd_next = qd->next;
+        if (hdr->dwFlags & WHDR_PREPARED) {
+            if (waveOutUnprepareHeader(pd->wo, hdr, sizeof(*hdr))
+                != MMSYSERR_NOERROR)
+            {
+                pd->queued_data = qd;
+                cst_errmsg("Failed to unprepare header %p\n", hdr);
+                cst_error();
+            }
+        }
+        cst_free(qd);
     }
+    pd->queued_data = NULL;
 }
 
 int audio_close_wince(cst_audiodev *ad)
@@ -185,14 +171,12 @@ int audio_close_wince(cst_audiodev *ad)
            in this case, the event will get set anyway. */
         if (pd->bcnt > 0)
             WaitForSingleObject(pd->bevt, INFINITE);
-        pd->in_reset = 1;
         err = waveOutReset(pd->wo);
         if (err != MMSYSERR_NOERROR)
         {
             cst_errmsg("Failed to reset output device: %x\n", err);
             cst_error();
         }
-        pd->in_reset = 0;
         free_queue_empty(ad);
         err = waveOutClose(pd->wo);
         if (err != MMSYSERR_NOERROR)
@@ -209,14 +193,18 @@ int audio_close_wince(cst_audiodev *ad)
 int audio_write_wince(cst_audiodev *ad, void *samples, int num_bytes)
 {
     au_wince_pdata *pd = ad->platform_data;
+    queue_data_t *qd;
     WAVEHDR *hdr;
     MMRESULT err;
 
     if (num_bytes == 0)
         return 0;
 
-    hdr = cst_alloc(WAVEHDR,1);
-    hdr->lpData = cst_alloc(char,num_bytes);
+    qd = cst_safe_alloc(offsetof(queue_data_t, data) + num_bytes);
+    qd->next = pd->queued_data;
+    pd->queued_data = qd;
+    hdr = &qd->hdr;
+    hdr->lpData = qd->data;
     memcpy(hdr->lpData,samples,num_bytes);
     hdr->dwBufferLength = num_bytes;
 
@@ -251,9 +239,7 @@ int audio_drain_wince(cst_audiodev *ad)
 {
     au_wince_pdata *pd = ad->platform_data;
 
-    pd->in_reset = 1;
     waveOutReset(pd->wo);
-    pd->in_reset = 0;
     free_queue_empty(ad);
     if (pd->bcnt > 0)
         WaitForSingleObject(pd->bevt, INFINITE);
